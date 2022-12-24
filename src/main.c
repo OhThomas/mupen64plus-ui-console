@@ -782,6 +782,51 @@ static m64p_error ParseCommandLineMain(int argc, const char **argv)
     return M64ERR_INPUT_INVALID;
 }
 
+static m64p_error ParseCommandLineInGame(char argv[])
+{
+    int i = 0;
+    char *delimeter = " ";
+    char *saveptr;
+    int argc = 0;
+    size_t size = strlen (argv);
+    for (i = 0; i <= size-1; i++)
+    {
+        if(argv[i] == ' ')
+            argc++;
+    }
+    char **data = malloc(argc);
+
+    data[0] = strtok_r(argv, delimeter, &saveptr);
+
+    for (i = 1; i <= argc; i++)
+    {
+        data[i] = strtok_r(NULL, delimeter, &saveptr);
+        if(data[i] == NULL)
+            break;
+    }
+
+    for (i = 0; i <= argc; i++)
+    {
+        int ArgsLeft = argc - i;
+        if (strcmp(data[i], "--resolution") == 0 && ArgsLeft >= 1)
+        {
+            const char *res = data[i+1];
+            int xres, yres;
+            i++;
+            if (sscanf(res, "%ix%i", &xres, &yres) != 2)
+                DebugMessage(M64MSG_WARNING, "couldn't parse resolution '%s'", res);
+            else
+            {
+                int resolution = (xres << 16) | yres;
+                if ((*CoreDoCommand)(M64CMD_CORE_STATE_SET, M64CORE_VIDEO_SIZE, &resolution) != M64ERR_SUCCESS)
+                    DebugMessage(M64MSG_ERROR, "core gave error while setting --resolution option");
+            }
+        }
+    }
+
+    free(data);
+}
+
 static m64p_error ParseCommandLinePlugin(int argc, const char **argv)
 {
     int i;
@@ -890,6 +935,27 @@ static m64p_media_loader l_media_loader =
     media_loader_get_dd_disk
 };
 
+void ReadCommands(void *arg){
+    int MAXC = 1000;
+    char k[MAXC];
+    int argc = 0;
+
+    for (;;) {                         // loop until EOF
+        if (fgets (k, MAXC, stdin)) {
+            if (*k == '\n')
+                continue;
+
+            size_t l = strlen (k);
+            if (l && k[l - 1] == '\n') // overwrite '\n' with nul-terminator
+                k[--l] = 0;
+            ParseCommandLineInGame(k);
+        }
+        else {
+            DebugMessage(M64MSG_WARNING, "EOF\n");
+            break;
+        }
+    }
+}
 
 /*********************************************************************************************************
 * main function
@@ -1137,6 +1203,14 @@ int main(int argc, char *argv[])
        before the relatively long-running game. */
     if (l_SaveOptions && (*ConfigHasUnsavedChanges)(NULL))
         (*ConfigSaveFile)();
+
+    /* read parameter changes */
+    uint8_t control_id;
+    #if SDL_VERSION_ATLEAST(2,0,0)
+        SDL_Thread* thread = SDL_CreateThread(ReadCommands, "Reading Commands", &control_id);
+    #else
+        SDL_Thread* thread = SDL_CreateThread(ReadCommands, &control_id);
+    #endif
 
     /* run the game */
     (*CoreDoCommand)(M64CMD_EXECUTE, 0, NULL);
